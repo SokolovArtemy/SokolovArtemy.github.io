@@ -1,0 +1,296 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width">
+    <title>Regular simplices in Q^n</title>
+    <script src="https://sagecell.sagemath.org/static/embedded_sagecell.js"></script>
+    <script>$(function () {
+    // Make the div with id 'mycell' a Sage cell
+    sagecell.makeSagecell({inputLocation:  '#mycell',
+                           
+                           evalButtonText: 'Execute'});
+    // Make *any* div with class 'compute' a Sage cell
+    sagecell.makeSagecell({inputLocation: 'div.compute',
+                           evalButtonText: 'Evaluate'});
+    });
+    </script>
+    
+  </head>
+  <body>
+
+
+<h2>Regular simplices in Q^n</h2>
+
+<p>Enter n, d in the code below and this program will show the coordinates of maximal regular simplex in Q^n with edge d.</p>
+    <div id="mycell" >
+    	<script type="text/x-sage">
+n = 6
+d = 1
+
+#this function was taken from sagemath-9.3-beta, it will disappear as soon as sagemath-9.3 will be released
+def _diagonal_isometry(V, W):
+    r"""
+    Given two diagonal, rationally equivalent quadratic forms, computes a
+    transition matrix mapping from one to the other.
+    .. NOTE::
+        This function is an auxiliary method of ``isometry``, which is
+        the method that should be called as it performs error-checking
+        that is not present in this function.
+    INPUT:
+    - ``V`` -- a diagonal quadratic form
+    - ``W`` -- a diagonal quadratic form
+    OUTPUT:
+    - A matrix ``T`` representing the isometry transformation, such that if
+      ``VM`` is the gram matrix of ``V`` and ``WM`` is the gram matrix of
+      ``W``, then ``VM == T.transpose() * WM * T`` yields ``True``.
+    EXAMPLES::
+        sage: from sage.quadratic_forms.quadratic_form__equivalence_testing import _diagonal_isometry
+        sage: Q = DiagonalQuadraticForm(QQ, [1, 2, 4])
+        sage: F = DiagonalQuadraticForm(QQ, [2, 2, 2])
+        sage: T = _diagonal_isometry(Q, F); T
+        [   0    1    0]
+        [-1/2    0    1]
+        [ 1/2    0    1]
+        sage: Q.Gram_matrix() == T.T * F.Gram_matrix() * T
+        True
+        sage: T = _diagonal_isometry(F, Q); T
+        [   0   -1   -1]
+        [   1    0    0]
+        [   0 -1/2  1/2]
+        sage: F.Gram_matrix() == T.T * Q.Gram_matrix() * T
+        True
+    """
+    import copy
+    from sage.quadratic_forms.quadratic_form import DiagonalQuadraticForm
+    from sage.matrix.constructor import Matrix
+    from sage.modules.free_module_element import vector
+
+    # We need to modify V and W, so copy them into Q and F respectively.
+    Q, F = copy.deepcopy(V), copy.deepcopy(W)
+    # Let FM denote the Gram matrix of F.
+    FM = F.Gram_matrix()
+    n = Q.dim()
+
+    # This matrix represents a new basis for W, where the columns of the
+    # matrix are the vectors of the basis. We initialize it to the standard basis.
+    change_of_basis_matrix = Matrix.identity(QQ, n)
+
+    # The goal of this loop is to obtain a new basis for W such that the
+    # Gram matrix of V with respect to the standard basis equals the Gram matrix
+    # of W with respect to the new basis.
+    for i in range(n):
+        # If the first terms are not equal...
+        if Q.Gram_matrix()[0][0] != F.Gram_matrix()[0][0]:
+            # Find a vector w in F such that F(w) equals the first term of Q.
+            w = F.solve(Q.Gram_matrix()[0][0])
+            w = vector(QQ, i*[0] + w.list())
+
+            # We want to extend the basis of W to include the vector w.
+            # Find a non-fixed vector in the current basis to replace by w.
+            j = i
+            # The new set of vectors must still be linearly independent (i.e. the matrix is non-singular).
+            while True:
+                temp_matrix = Matrix(change_of_basis_matrix)
+                temp_matrix.set_column(j, change_of_basis_matrix*w)
+                if not temp_matrix.is_singular():
+                    break
+                j = j + 1
+
+            change_of_basis_matrix = temp_matrix
+
+            # We want to fix w to be the basis vector at position i, so swap it with whatever is already there.
+            col = change_of_basis_matrix.column(i)
+            change_of_basis_matrix.set_column(i, change_of_basis_matrix.column(j))
+            change_of_basis_matrix.set_column(j, col)
+
+            # Orthogonalize the basis.
+            change_of_basis_matrix = _gram_schmidt(change_of_basis_matrix, i, W.bilinear_map)
+
+            # Obtain the diagonal gram matrix of F.
+            FM = W(change_of_basis_matrix).Gram_matrix_rational()
+
+        # Now we have that QM[0][0] == FM[0][0] where QM and FM are the Gram matrices
+        # of Q and F respectively. We remove the first variable from each form and continue.
+        F = DiagonalQuadraticForm(F.base_ring(), FM.diagonal())
+        F = F.extract_variables(range(i + 1, F.dim()))
+        Q = Q.extract_variables(range(1, Q.dim()))
+
+    return change_of_basis_matrix
+
+
+#this function was taken from sagemath-9.3-beta, it will disappear as soon as sagemath-9.3 will be released
+def _gram_schmidt(m, fixed_vector_index, inner_product):
+    r"""
+    Orthogonalize a set of vectors, starting at a fixed vector, with respect to a given
+    inner product.
+    INPUT:
+    - ``m`` -- a square matrix whose columns represent vectors
+    - ``fixed_vector_index`` -- any vectors preceding the vector (i.e. to its left)
+        at this index are not changed.
+    - ``inner_product`` - a function that takes two vector arguments and returns a scalar,
+        representing an inner product.
+    OUTPUT:
+    - A matrix consisting of orthogonal columns with respect to the given inner product
+    EXAMPLES::
+        sage: from sage.quadratic_forms.quadratic_form__equivalence_testing import _gram_schmidt
+        sage: Q = QuadraticForm(QQ, 3, [1, 2, 2, 2, 1, 3]); Q
+        Quadratic form in 3 variables over Rational Field with coefficients:
+        [ 1 2 2 ]
+        [ * 2 1 ]
+        [ * * 3 ]
+        sage: QM = Q.Gram_matrix(); QM
+        [  1   1   1]
+        [  1   2 1/2]
+        [  1 1/2   3]
+        sage: std_basis = matrix.identity(3)
+        sage: ortho_basis = _gram_schmidt(std_basis, 0, Q.bilinear_map); ortho_basis
+        [   1   -1 -3/2]
+        [   0    1  1/2]
+        [   0    0    1]
+        sage: Q(ortho_basis).Gram_matrix_rational()
+        [  1   0   0]
+        [  0   1   0]
+        [  0   0 7/4]
+        sage: v1 = ortho_basis.column(0); v2 = ortho_basis.column(1); v3 = ortho_basis.column(2);
+        sage: Q.bilinear_map(v1, v2) == 0
+        True
+        sage: Q.bilinear_map(v1, v3) == 0
+        True
+        sage: Q.bilinear_map(v2, v3) == 0
+        True
+    """
+    from sage.matrix.constructor import column_matrix
+
+    n = m.dimensions()[0]
+    vectors = [0] * n
+
+    for i in range(n):
+        vectors[i] = m.column(i)
+    for i in range(fixed_vector_index, n):
+        for j in range(i+1, n):
+            vectors[j] = vectors[j] - (inner_product(vectors[j], vectors[i]) / inner_product(vectors[i], vectors[i])) * vectors[i]
+
+    return column_matrix(vectors)
+
+from math import *
+
+def E(n, r=1): # returns identity forms of rank n
+	return DiagonalQuadraticForm(QQ, [r]*n)
+
+def S(n): # returns quadratic form related to regular simplex on (n+1) vertices 
+	return DiagonalQuadraticForm(QQ, [i*(i+1)/2 for i in range(1, n+1)])
+
+def Coord(n):  # gives coordinates of clique in S(n) quadratic form
+	if n == 0:
+		return [vector([])]
+	if n == 1:
+		return [vector([0]), vector([1])]
+	X = Coord(n - 1)
+	X = [ vector(list(i) + [0])  for i in X]
+	v = sum(X) / n
+	#print(X, v)
+	x = sum([i*(i+1)/2 * v[i-1]**2 for i in range(1, n+1)])
+	v[-1] = sqrt((1 - x) /  (n*(n+1)/2)  )
+	return X + [vector(v)]
+
+def dist(A, B):
+	return sum([(A[i]-B[i])**2 for i in range(len(A))])
+
+
+
+def is_embeddable(M, N): 
+	# checks if M is embedable in N, if yes returns sufficient extra coordinates
+	k = N.dim() - M.dim()
+	if k < 0:
+		return False
+	P = []
+	ND = squarefree_part(N.Gram_det())
+	MD = squarefree_part(M.Gram_det())
+	D = squarefree_part(ND * MD)
+	if k == 0:
+		# исправить для правильных p
+ 		if D == 1 and all([  M.hasse_invariant(p) == N.hasse_invariant(p)  for p in [-1] + list(prime_range(10**2))]):
+ 			return True, DiagonalQuadraticForm(QQ, [])
+ 		else:
+ 			return False
+ 
+	for p in [-1] + list(prime_range(10**2)):
+		# исправить для правильных p
+		if M.hasse_invariant(p) * N.hasse_invariant(p) * hilbert_symbol(MD, D, p) == -1:
+			P.append(p)
+		try:
+			#print(k)
+			DD = quadratic_form_from_invariants(QQ,k, D, P, 0)
+			return True, DD
+		except ValueError:
+			return False
+
+
+def w(M):
+	k = M.dim()
+	while not is_embeddable(S(k), M):
+		k -= 1
+	return k + 1
+
+def t(n):
+    return (n + 1) // (2**(n % 2))
+
+'''
+for p in [-1] + list(prime_range(2, 51)):
+    x = 1
+    for n in range(1, 51):
+        print(S(n).hasse_invariant(p), end = ' ')
+    print()
+    for n in range(1, 51):
+        print(hilbert_symbol(n + 1, t(n-1), p), end = ' ')
+    print()
+    print()
+'''
+
+A = E(n, 1/d)
+k = w(A) - 1
+print("w(Q^%d, %d) = %d" % (n, d, k + 1))
+print()
+B = S(k)
+X = is_embeddable(B, A)[1].rational_diagonal_form()
+#print(X)
+
+P = Coord(k)
+P = [  vector(list(i) + [0]*(n-k))   for i in P]
+
+B = B.Gram_matrix().diagonal() + X.Gram_matrix().diagonal()
+B = DiagonalQuadraticForm(QQ, B)
+
+
+X = _diagonal_isometry(B, A)
+P = [v*X.transpose() for v in P]
+print("Coordinates:")
+print(matrix(P))
+
+print("\nChecking:")
+
+for u in P:
+	for v in P:
+		print(dist(u, v), end = ' ')
+	print()
+
+    	</script>
+    </div>
+
+
+
+<div style=" position: absolute; bottom: 0; left: 0; width: 100%; text-align: center;">
+	<center>
+		<br> Made by Artemy Sokolov, MIPT	
+        <br> If you have any questions contact me:
+		<br> sokolov.aa AT phystech.edu
+		<!--
+		<br> Powered by SageMathCell
+		-->
+	</center>
+</div>
+
+
+  </body>
+</html>
