@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Плитка на кухне</title>
+<style>
+    .container {
+        display: grid;
+        grid-template-columns: repeat(20, 100px);
+        grid-template-rows: repeat(10, 100px);
+        gap: 5px;
+    }
+
+    .square {
+        width: 100px;
+        height: 100px;
+        background-color: #ccc;
+        cursor: pointer;
+    }
+
+    .square img {
+        width: 100%;
+        height: 100%;
+        display: none;
+    }
+
+    .square.active img {
+        display: block;
+    }
+</style>
+</head>
+<body>
+
+<div class="container" id="container"></div>
+
+<script>
+    const images = ["1.svg", "2.svg"];
+    const numSquares = 200;
+
+    const container = document.getElementById("container");
+
+    for (let i = 0; i < numSquares; i++) {
+        const square = document.createElement("div");
+        square.classList.add("square");
+        square.dataset.index = i;
+        square.dataset.imageIndex = localStorage.getItem(`imageIndex_${i}`) || -1; // Используем localStorage
+        square.innerHTML = `
+            <img src="${images[0]}" alt="Image 1">
+            <img src="${images[1]}" alt="Image 2">
+        `;
+        square.addEventListener("click", function() {
+            next_image(square);
+        });
+        square.addEventListener("contextmenu", function() {
+            event.preventDefault();
+            reset_image(square);
+        });
+        container.appendChild(square);
+        update_image(square);
+    }
+
+    function reset_image(square) {
+        square.dataset.imageIndex = -1;
+        localStorage.setItem(`imageIndex_${square.dataset.index}`, -1); // Сохраняем состояние в localStorage
+        update_image(square);
+    }
+
+    
+    function next_image(square) {
+        const index = parseInt(square.dataset.imageIndex);
+        const new_index = (index + 1) % images.length;
+        square.dataset.imageIndex = new_index;
+        localStorage.setItem(`imageIndex_${square.dataset.index}`, new_index); // Сохраняем состояние в localStorage
+        update_image(square);
+    }
+
+    function update_image(square) {
+        const imageIndex = parseInt(square.dataset.imageIndex);
+        const imagesInSquare = square.querySelectorAll('img');
+        imagesInSquare.forEach((img, index) => {
+            img.style.display = (index === imageIndex) ? 'block' : 'none';
+        });
+    }
+</script>
+
+</body>
+</html>
