@@ -32,10 +32,23 @@
 </head>
 <body>
 
+<p>
+    Левым кликом можно менять поворот плитки.
+</p> 
+<p>
+    Правым кликом можно менять цвет плитки.
+</p>
+<p>
+    Можно все начать заново этой кнопкой:
+    <button id="clearButton">Очистить</button>
+</p>
+
+
+
 <div class="container" id="container"></div>
 
 <script>
-    const images = ["1.svg", "2.svg"];
+    const images = ["1.png", "2.png", "3.png", "4.png"];
     const numSquares = 200;
 
     const container = document.getElementById("container");
@@ -48,28 +61,43 @@
         square.innerHTML = `
             <img src="${images[0]}" alt="Image 1">
             <img src="${images[1]}" alt="Image 2">
+            <img src="${images[2]}" alt="Image 3">
+            <img src="${images[3]}" alt="Image 4">
         `;
         square.addEventListener("click", function() {
             next_image(square);
         });
         square.addEventListener("contextmenu", function() {
             event.preventDefault();
-            reset_image(square);
+            change_color(square);
         });
         container.appendChild(square);
         update_image(square);
     }
 
-    function reset_image(square) {
-        square.dataset.imageIndex = -1;
-        localStorage.setItem(`imageIndex_${square.dataset.index}`, -1); // Сохраняем состояние в localStorage
+    function change_color(square) {
+        console.log("Change color");
+        const index = parseInt(square.dataset.imageIndex);
+        const new_index = (index + 2)%images.length;
+        square.dataset.imageIndex = new_index;
+        localStorage.setItem(`imageIndex_${square.dataset.index}`, new_index); // Сохраняем состояние в localStorage
         update_image(square);
     }
 
     
     function next_image(square) {
         const index = parseInt(square.dataset.imageIndex);
-        const new_index = (index + 1) % images.length;
+        var new_index;
+        if (index == -1){
+            new_index = 0;
+        }
+        else if (index % 2 == 0){
+            new_index = index + 1;
+        }
+        else{
+            new_index = index - 1;
+        }
+        new_index = (new_index) % images.length;
         square.dataset.imageIndex = new_index;
         localStorage.setItem(`imageIndex_${square.dataset.index}`, new_index); // Сохраняем состояние в localStorage
         update_image(square);
@@ -82,6 +110,11 @@
             img.style.display = (index === imageIndex) ? 'block' : 'none';
         });
     }
+
+    document.getElementById("clearButton").addEventListener("click", function() {
+        localStorage.clear(); // Очищаем сохраненные данные из localStorage
+        location.reload(); // Перезагружаем страницу для сброса всех квадратов к начальному состоянию
+    });
 </script>
 
 </body>
