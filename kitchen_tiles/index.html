@@ -8,7 +8,7 @@
     .container {
         display: grid;
         grid-template-columns: repeat(20, 100px);
-        grid-template-rows: repeat(20, 100px);
+        grid-template-rows: repeat(10, 100px);
         gap: 1px;
     }
 
@@ -39,6 +39,9 @@
     Правым кликом можно менять цвет плитки.
 </p>
 <p>
+    Удалить одну плитку можно если зажать Ctrl.
+</p>
+<p>
     Можно все начать заново этой кнопкой:
     <button id="clearButton">Очистить</button>
 </p>
@@ -49,7 +52,7 @@
 
 <script>
     const images = ["1.png", "2.png", "3.png", "4.png"];
-    const numSquares = 400;
+    const numSquares = 200;
 
     const container = document.getElementById("container");
 
@@ -65,18 +68,31 @@
             <img src="${images[3]}" alt="Image 4">
         `;
         square.addEventListener("click", function() {
-            next_image(square);
+            if (event.ctrlKey) {
+	        	erase_image(square);
+            }
+            else{
+                next_image(square);
+            }
+            
         });
         square.addEventListener("contextmenu", function() {
             event.preventDefault();
             change_color(square);
         });
+        
         container.appendChild(square);
         update_image(square);
     }
 
+    function erase_image(square) {
+        const new_index = -1;
+        square.dataset.imageIndex = new_index;
+        localStorage.setItem(`imageIndex_${square.dataset.index}`, new_index); // Сохраняем состояние в localStorage
+        update_image(square);
+    }
+
     function change_color(square) {
-        console.log("Change color");
         const index = parseInt(square.dataset.imageIndex);
         const new_index = (index + 2)%images.length;
         square.dataset.imageIndex = new_index;
