@@ -1,1 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>GeoGebra → 3D модель для печати (ggb2stl)</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>GeoGebra → 3D модель для печати</h1>
+  <p>Точки, отрезки, векторы, окружности, прямые/лучи и стороны многоугольников превращаются в купола и валики (подложка — опционально). Есть превью перед экспортом в STL.</p>
+</header>
 
+<div class="top-row">
+  <div id="ggb-wrap">
+    <div id="ggb-element"></div>
+    <button id="fullscreenBtn" title="Развернуть апплет на весь экран">⛶ На весь экран</button>
+  </div>
+
+  <div class="panel" id="previewPanel">
+    <h2>Превью 3D модели</h2>
+    <div id="previewWrap">
+      <canvas id="previewCanvas"></canvas>
+      <div id="previewHint">Постройте модель, чтобы увидеть превью (вращение — перетаскивание мышью, зум — колесо).</div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="settingsPanel">
+  <h2>Параметры и экспорт</h2>
+
+  <div class="actions-row">
+    <button id="buildBtn" disabled>Загрузка апплета…</button>
+    <button id="downloadBtn" disabled>Скачать STL</button>
+  </div>
+
+  <div class="settings-grid">
+    <div class="settings-block">
+      <h3>Файл конструкции</h3>
+      <div class="file-input-row">
+        <input type="file" id="ggbFileInput" accept=".ggb,.ggs,.ggt">
+        <div class="hint-text">
+          Либо используйте меню апплета «Файл → Открыть». Конструкция автоматически сохраняется в браузере и восстанавливается при обновлении страницы —
+          <button type="button" id="forgetAutosaveBtn" class="link-btn">забыть сохранённое</button>.
+        </div>
+      </div>
+      <div class="mode-row">
+        <label><input type="radio" name="mode" value="relief" checked> Рельеф на подложке (2D)</label>
+        <label><input type="radio" name="mode" value="full3d"> Полный 3D (сферы/цилиндры)</label>
+      </div>
+    </div>
+
+    <fieldset>
+      <legend>Масштаб и размеры</legend>
+      <div class="field-row">
+        <label for="mmPerUnit">мм на 1 единицу GeoGebra</label>
+        <input type="number" id="mmPerUnit" value="10" step="0.5" min="0.1">
+      </div>
+      <div class="field-row">
+        <label for="pointRadius">Радиус точки (мм)</label>
+        <input type="number" id="pointRadius" value="3" step="0.1" min="0.1">
+      </div>
+      <div class="field-row">
+        <label for="segmentRadius">Радиус отрезка (мм)</label>
+        <input type="number" id="segmentRadius" value="2" step="0.1" min="0.1">
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Дуги углов (Angle)</legend>
+      <div class="field-row">
+        <label for="angleArcRadius">Радиус дуги угла (мм)</label>
+        <input type="number" id="angleArcRadius" value="8" step="0.5" min="0.5">
+      </div>
+      <div class="field-row">
+        <label for="angleArcThickness">Толщина дуги угла (мм)</label>
+        <input type="number" id="angleArcThickness" value="1" step="0.1" min="0.1">
+      </div>
+      <div class="hint-text">Отдельная (обычно меньшая) толщина — метки углов не должны выглядеть как полноценные отрезки. Радиус автоматически уменьшается, если рядом короткая сторона.</div>
+    </fieldset>
+
+    <fieldset id="plateOptions">
+      <legend>Подложка (только для режима «Рельеф»)</legend>
+      <div class="field-row">
+        <label for="addPlate">Добавить подложку</label>
+        <input type="checkbox" id="addPlate" checked style="width:auto;">
+      </div>
+      <div class="field-row">
+        <label for="plateThickness">Толщина подложки (мм)</label>
+        <input type="number" id="plateThickness" value="2" step="0.1" min="0.5">
+      </div>
+      <div class="field-row">
+        <label for="plateMargin">Отступ от краёв (мм)</label>
+        <input type="number" id="plateMargin" value="6" step="0.5" min="0">
+      </div>
+      <div class="field-row">
+        <label for="embedDepth">Заглубление в подложку (мм)</label>
+        <input type="number" id="embedDepth" value="0.4" step="0.05" min="0">
+      </div>
+    </fieldset>
+
+    <details>
+      <summary>Точность сетки (детализация)</summary>
+      <div class="field-row">
+        <label for="segsAround">Сегментов по окружности</label>
+        <input type="number" id="segsAround" value="24" step="1" min="6" max="128">
+      </div>
+      <div class="field-row">
+        <label for="segsAlong">Сегментов вдоль дуги полусферы</label>
+        <input type="number" id="segsAlong" value="8" step="1" min="2" max="64">
+      </div>
+    </details>
+  </div>
+</div>
+
+<div class="panel" id="reportPanel">
+  <h2>Отчёт: сколько точек/отрезков получилось</h2>
+  <div id="status">Постройте модель, чтобы увидеть отчёт.</div>
+</div>
+
+<script src="meshgen.js"></script>
+<script src="stlexport.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://www.geogebra.org/apps/deployggb.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
