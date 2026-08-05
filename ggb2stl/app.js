@@ -103,14 +103,44 @@ if (typeof window !== "undefined") {
   });
 }
 
+// Entering/exiting fullscreen is animated by the browser (macOS in
+// particular can take noticeably longer than a fixed guess), so a single
+// setTimeout(fitAppletToContainer, 150) after "fullscreenchange" can fire
+// mid-transition and lock in a stale, wrong size once the animation
+// actually finishes -- this was the cause of the applet's borders coming
+// out wrong after leaving fullscreen. A ResizeObserver on #ggb-wrap itself
+// sidesteps the guessing entirely: it fires for the *actual* rendered size,
+// however long the transition takes, on both entering and leaving
+// fullscreen (and for ordinary window/layout resizes too).
+if (typeof window !== "undefined" && typeof ResizeObserver !== "undefined") {
+  const startObserving = () => {
+    const wrap = document.getElementById("ggb-wrap");
+    if (!wrap) return;
+    let raf = null;
+    const observer = new ResizeObserver(() => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(fitAppletToContainer);
+    });
+    observer.observe(wrap);
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startObserving);
+  } else {
+    startObserving();
+  }
+}
+
 if (typeof document !== "undefined") {
   const onFullscreenChange = () => {
     const btn = document.getElementById("fullscreenBtn");
     const wrap = document.getElementById("ggb-wrap");
     const isFull = document.fullscreenElement === wrap || document.webkitFullscreenElement === wrap;
     if (btn) btn.textContent = isFull ? "✕ Свернуть" : "⛶ На весь экран";
-    // give the browser a moment to finish the fullscreen transition before measuring
+    // Kept as a fallback for browsers without ResizeObserver, or as a quick
+    // first correction -- the ResizeObserver above will fix up the size
+    // again once the transition actually settles, however long that takes.
     setTimeout(fitAppletToContainer, 150);
+    setTimeout(fitAppletToContainer, 500);
   };
   document.addEventListener("fullscreenchange", onFullscreenChange);
   document.addEventListener("webkitfullscreenchange", onFullscreenChange);
@@ -424,6 +454,28 @@ function applyDashPattern(points, closed, tokens) {
   return { onSegments, dots };
 }
 
+// GeoGebra's own default behavior: an Angle() that measures exactly 90° gets
+// drawn as a small square corner marker instead of an arc (the classic
+// "right angle" symbol), as long as the angle's "emphasize right angle" flag
+// is on (default: on) and its right-angle marker style isn't set to "none".
+// Since a right angle's two rays are perpendicular, the little square's far
+// two corners are just `r` along each ray -- no separate geometry needed
+// beyond the vertex + the arc's own startAngle (the second ray direction is
+// exactly startAngle + 90°).
+const RIGHT_ANGLE_EPS = 1e-6;
+
+function rightAngleSquarePoints(cx, cy, startAngle, r) {
+  const ux1 = Math.cos(startAngle), uy1 = Math.sin(startAngle);
+  const ux2 = Math.cos(startAngle + Math.PI / 2), uy2 = Math.sin(startAngle + Math.PI / 2);
+  const p0 = { x: cx, y: cy };
+  const p1 = { x: cx + r * ux1, y: cy + r * uy1 };
+  const p2 = { x: cx + r * ux1 + r * ux2, y: cy + r * uy1 + r * uy2 };
+  const p3 = { x: cx + r * ux2, y: cy + r * uy2 };
+  const points = [p0, p1, p2, p3];
+  const edges = [[p0, p1], [p1, p2], [p2, p3], [p3, p0]];
+  return { points, edges };
+}
+
 // ---- extraction from the live GeoGebra construction -----------------------
 
 function safeGetZ(name) {
@@ -465,6 +517,7 @@ function extractGeometry() {
   const n = ggbApplet.getObjectNumber();
   const allPointCoords = {}; // label -> {x,y,z}
   const visiblePointLabels = new Set();
+  const pointSizeByLabel = {}; // label -> GeoGebra's own point "Size" (1-9, default 5)
   const skipped = [];
   const handledLabels = new Set();
 
@@ -478,6 +531,17 @@ function extractGeometry() {
         z: safeGetZ(name),
       };
       if (ggbApplet.getVisible(name)) visiblePointLabels.add(name);
+      // GeoGebra's Apps API exposes each point's own "Size" style property
+      // (Object Properties -> Style, slider 1-9, default 5) via
+      // getPointSize(). We read it so the printed radius follows whatever
+      // size the user already set per-point inside GeoGebra, instead of
+      // printing every point at the same fixed size regardless of how it
+      // looks on screen. Older/mocked applets without this method (e.g. in
+      // tests) fall back to GeoGebra's own default of 5, i.e. sizeFactor 1.
+      try {
+        const sz = ggbApplet.getPointSize(name);
+        if (isFinite(sz) && sz > 0) pointSizeByLabel[name] = sz;
+      } catch (e) { /* fall back to default size below */ }
       handledLabels.add(name);
     }
   }
@@ -516,7 +580,23 @@ function extractGeometry() {
   // XML schema ("lineTypes"), the value is one of 0=full, 10=dashed short,
   // 15=dashed long, 20=dotted, 30=dashed dotted. Objects with no <lineStyle>
   // (or type 0) are solid, exactly as before.
+  //
+  // And for angles specifically: <emphasizeRightAngle val="true|false"/>
+  // (default true when absent -- this matches GeoGebra's own default
+  // behavior of automatically drawing a small square instead of an arc for
+  // any angle that measures exactly 90°).
+  //
+  // NOTE on <angleStyle val="N"/>: an earlier version of this code treated
+  // this as the "rightAngleStyles" enum (0=none,1=square,2=dot,3=L/Belgian)
+  // and used val=0 to suppress the square marker. A real .ggb file from a
+  // user had a 90° angle with <angleStyle val="0"/> that GeoGebra still
+  // draws as a square (its view-level default, <evSettings
+  // rightAngleStyle="1">, is "square") -- so val="0" here evidently does
+  // NOT mean "none". Since we don't reliably know what this tag means, we
+  // no longer use it to suppress the square at all; only an explicit
+  // <emphasizeRightAngle val="false"/> turns it off.
   const angleArcSizeByLabel = {};
+  const emphasizeRightAngleByLabel = {};
   const lineStyleTypeByLabel = {};
   if (xmlDoc) {
     const elements = xmlDoc.getElementsByTagName("element");
@@ -528,6 +608,10 @@ function extractGeometry() {
         if (label && arcSizeEls.length > 0) {
           const val = parseFloat(arcSizeEls[0].getAttribute("val"));
           if (isFinite(val) && val > 0) angleArcSizeByLabel[label] = val / 30;
+        }
+        if (label) {
+          const emphEls = el.getElementsByTagName("emphasizeRightAngle");
+          if (emphEls.length > 0) emphasizeRightAngleByLabel[label] = emphEls[0].getAttribute("val") !== "false";
         }
       }
       if (label) {
@@ -605,6 +689,36 @@ function extractGeometry() {
         } else if (!circleLabel || labelVisible(circleLabel)) {
           skipped.push(`Окружность "${circleLabel || "?"}": не удалось определить центр/радиус (неподдерживаемый вариант команды Circle) — пропущена.`);
         }
+      } else if (cmdName === "Incircle") {
+        // Incircle(A,B,C): the inscribed circle of triangle ABC. GeoGebra's
+        // command signature only ever takes exactly 3 points -- there's no
+        // separate Excircle or Circumcircle command (circumcircle is just
+        // Circle(A,B,C), already handled above), confirmed against
+        // GeoGebra's own Geometry Commands list -- so this is computed
+        // directly from the standard incenter/inradius closed-form formulas
+        // rather than depending on any undocumented conic-coefficient XML
+        // representation.
+        const circleLabel = outputs[0];
+        handledLabels.add(circleLabel);
+        let resolved = null;
+        if (inputs.length >= 3 && haveCoords(inputs[0]) && haveCoords(inputs[1]) && haveCoords(inputs[2])) {
+          const A = allPointCoords[inputs[0]], B = allPointCoords[inputs[1]], C = allPointCoords[inputs[2]];
+          const a = dist2D(B, C), b = dist2D(A, C), c = dist2D(A, B);
+          const perim = a + b + c;
+          if (perim > 1e-9) {
+            const ix = (a * A.x + b * B.x + c * C.x) / perim;
+            const iy = (a * A.y + b * B.y + c * C.y) / perim;
+            const area = Math.abs((B.x - A.x) * (C.y - A.y) - (C.x - A.x) * (B.y - A.y)) / 2;
+            const s = perim / 2;
+            const r = s > 1e-9 ? area / s : 0;
+            if (r > 1e-9) resolved = { x: ix, y: iy, r };
+          }
+        }
+        if (resolved && (!circleLabel || labelVisible(circleLabel))) {
+          circles.push({ ...resolved, label: circleLabel });
+        } else if (!circleLabel || labelVisible(circleLabel)) {
+          skipped.push(`Вписанная окружность "${circleLabel || "?"}": не удалось определить (нужны 3 точки, не лежащие на одной прямой) — пропущена.`);
+        }
       } else if (cmdName === "Ray") {
         const rayLabel = outputs[0];
         handledLabels.add(rayLabel);
@@ -628,7 +742,10 @@ function extractGeometry() {
             if (resolved.r > 1e-9 && maxRadius > 1e-9) {
               const sizeFactor = (outLabel && angleArcSizeByLabel[outLabel]) || 1;
               const lineType = getLineType(outLabel);
-              angleArcs.push({ cx: B.x, cy: B.y, startAngle: resolved.startAngle, endAngle: resolved.endAngle, maxRadius, sizeFactor, lineType });
+              const sweep = resolved.endAngle - resolved.startAngle;
+              const emphasize = outLabel ? emphasizeRightAngleByLabel[outLabel] !== false : true;
+              const isRightAngle = emphasize && Math.abs(sweep - Math.PI / 2) < RIGHT_ANGLE_EPS;
+              angleArcs.push({ cx: B.x, cy: B.y, startAngle: resolved.startAngle, endAngle: resolved.endAngle, maxRadius, sizeFactor, lineType, isRightAngle });
               return true;
             }
           }
@@ -642,14 +759,24 @@ function extractGeometry() {
             skipped.push(`Угол "${label || "?"}": вершина совпадает с одной из точек — пропущен.`);
           }
         } else if (inputs.length === 1 && polygonVertices[inputs[0]]) {
+          // Angle(Polygon): per GeoGebra's own docs, "if the polygon was
+          // created in counter-clockwise orientation, you get the interior
+          // angles" (and exterior angles for a clockwise-wound polygon).
+          // Concretely, the CCW sweep that gives this (for either winding)
+          // goes FROM the ray toward the *next* vertex TO the ray toward the
+          // *previous* vertex -- i.e. pushAngleArc's first two "point"
+          // arguments must be (next, prev), not (prev, next). Getting this
+          // backwards silently doubles every interior angle into its 360°
+          // complement (e.g. a rectangle's 90° corners becoming 270°), which
+          // also meant right angles were never detected as such.
           const verts = polygonVertices[inputs[0]];
           for (let k = 0; k < verts.length; k++) {
             const outLabel = outputs[k];
             handledLabels.add(outLabel);
-            const A = allPointCoords[verts[(k - 1 + verts.length) % verts.length]];
-            const B = allPointCoords[verts[k]];
-            const C = allPointCoords[verts[(k + 1) % verts.length]];
-            pushAngleArc(A, B, C, outLabel);
+            const prevPt = allPointCoords[verts[(k - 1 + verts.length) % verts.length]];
+            const vertexPt = allPointCoords[verts[k]];
+            const nextPt = allPointCoords[verts[(k + 1) % verts.length]];
+            pushAngleArc(nextPt, vertexPt, prevPt, outLabel);
           }
         } else {
           const label = outputs[0];
@@ -870,7 +997,14 @@ function extractGeometry() {
     else dashedPaths.push({ points: [{ x: seg.ax, y: seg.ay }, { x: seg.bx, y: seg.by }], closed: false, lineType });
   }
 
-  const points = Array.from(visiblePointLabels).map((label) => ({ label, ...allPointCoords[label] }));
+  const points = Array.from(visiblePointLabels).map((label) => ({
+    label,
+    ...allPointCoords[label],
+    // 1 = GeoGebra's default point size (5); the app's own "Радиус точки"
+    // setting is the printed radius for a default-size point, scaled by
+    // this factor for points the user has resized inside GeoGebra.
+    sizeFactor: (pointSizeByLabel[label] || 5) / 5,
+  }));
   const edges = resolvedEdges.concat(rawEdges);
 
   // angleArcs are returned raw (un-sampled): their print radius is a UI
@@ -886,8 +1020,8 @@ function extractGeometry() {
 function readParams() {
   return {
     mmPerUnit: parseFloat(document.getElementById("mmPerUnit").value) || 10,
-    pointRadius: parseFloat(document.getElementById("pointRadius").value) || 3,
-    segmentRadius: parseFloat(document.getElementById("segmentRadius").value) || 2,
+    pointRadius: parseFloat(document.getElementById("pointRadius").value) || 2,
+    segmentRadius: parseFloat(document.getElementById("segmentRadius").value) || 1,
     angleArcRadius: parseFloat(document.getElementById("angleArcRadius").value) || 8,
     angleArcThickness: parseFloat(document.getElementById("angleArcThickness").value) || 1,
     plateThickness: parseFloat(document.getElementById("plateThickness").value) || 2,
@@ -927,7 +1061,7 @@ function buildScene() {
   let edgeCount = scene.edges.length + (scene.dashedPaths || []).length;
 
   if (p.mode === "relief") {
-    const scaledPoints = scene.points.map((pt) => ({ x: pt.x * p.mmPerUnit, y: pt.y * p.mmPerUnit }));
+    const scaledPoints = scene.points.map((pt) => ({ x: pt.x * p.mmPerUnit, y: pt.y * p.mmPerUnit, sizeFactor: pt.sizeFactor || 1 }));
     const scaledEdges = scene.edges.map((e) => ({
       ax: e.a.x * p.mmPerUnit, ay: e.a.y * p.mmPerUnit,
       bx: e.b.x * p.mmPerUnit, by: e.b.y * p.mmPerUnit,
@@ -968,7 +1102,15 @@ function buildScene() {
     for (const a of scene.angleArcs || []) {
       const r = Math.min(angleArcRadiusRaw * (a.sizeFactor || 1), a.maxRadius * 0.9);
       if (r <= 1e-9) continue;
-      const { points: rawPts, edges: rawEdgesForArc } = arcToPolyline(a.cx, a.cy, r, a.startAngle, a.endAngle, 48);
+      // A right angle (exactly 90°, GeoGebra's "emphasize right angle"
+      // default) is marked with a small square corner instead of an arc --
+      // same shape as GeoGebra draws it on screen.
+      const shape = a.isRightAngle
+        ? rightAngleSquarePoints(a.cx, a.cy, a.startAngle, r)
+        : arcToPolyline(a.cx, a.cy, r, a.startAngle, a.endAngle, 48);
+      const rawPts = shape.points;
+      const rawEdgesForArc = shape.edges;
+      const closed = !!a.isRightAngle;
       const tokens = dashTokensForLineType(a.lineType, angleDashBaseUnitRaw);
       if (!tokens) {
         for (const [p0, p1] of rawEdgesForArc) {
@@ -976,7 +1118,7 @@ function buildScene() {
         }
         for (const pt of rawPts) scaledAngleJoints.push({ x: pt.x * p.mmPerUnit, y: pt.y * p.mmPerUnit });
       } else {
-        const { onSegments, dots } = applyDashPattern(rawPts, false, tokens);
+        const { onSegments, dots } = applyDashPattern(rawPts, closed, tokens);
         for (const seg of onSegments) {
           scaledAngleDashEdges.push({ ax: seg.a.x * p.mmPerUnit, ay: seg.a.y * p.mmPerUnit, bx: seg.b.x * p.mmPerUnit, by: seg.b.y * p.mmPerUnit });
         }
@@ -1012,7 +1154,7 @@ function buildScene() {
       triangles.push(...MeshGen.boxMesh(minX - p.plateMargin, minY - p.plateMargin, -p.plateThickness, maxX + p.plateMargin, maxY + p.plateMargin, 0));
     }
 
-    for (const pt of scaledPoints) triangles.push(...MeshGen.hemisphereMesh(pt.x, pt.y, z0, p.pointRadius, p.segsAround, p.segsAlong));
+    for (const pt of scaledPoints) triangles.push(...MeshGen.hemisphereMesh(pt.x, pt.y, z0, p.pointRadius * pt.sizeFactor, p.segsAround, p.segsAlong));
     for (const e of scaledEdges) triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.segmentRadius, p.segsAround));
     for (const j of scaledJoints) triangles.push(...MeshGen.hemisphereMesh(j.x, j.y, z0, p.segmentRadius, p.segsAround, Math.max(4, Math.round(p.segsAlong / 2))));
     for (const e of scaledAngleEdges) triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.angleArcThickness, p.segsAround));
@@ -1043,7 +1185,7 @@ function buildScene() {
     // we simply don't render circleJoints/derived edges twice, so nothing
     // extra is needed, full3D just ignores circleJoints.
     for (const pt of scene.points) {
-      triangles.push(...MeshGen.sphereMesh(pt.x * p.mmPerUnit, pt.y * p.mmPerUnit, pt.z * p.mmPerUnit, p.pointRadius, p.segsAround, Math.max(p.segsAlong, 8) * 2));
+      triangles.push(...MeshGen.sphereMesh(pt.x * p.mmPerUnit, pt.y * p.mmPerUnit, pt.z * p.mmPerUnit, p.pointRadius * (pt.sizeFactor || 1), p.segsAround, Math.max(p.segsAlong, 8) * 2));
     }
     for (const e of scene.edges) {
       triangles.push(...MeshGen.cylinderMesh(
@@ -1136,7 +1278,16 @@ function initPreviewViewer() {
     let mesh = null;
 
     // --- minimal orbit controller (drag to rotate, wheel to zoom) ---
-    const orbit = { theta: Math.PI / 4, phi: Math.PI / 3.2, radius: 100, target: new THREE.Vector3(0, 0, 0) };
+    // Default view: looking almost straight down the +Z axis at the model
+    // ("face forward", as if looking at the original flat GeoGebra picture)
+    // -- theta=-PI/2 paired with a near-zero phi is the specific combination
+    // that keeps +X to the right and +Y up on screen (unmirrored), matching
+    // GeoGebra's own 2D view convention. phi is kept just above 0 (rather
+    // than exactly 0) to avoid the camera-orientation singularity that
+    // occurs when the view direction is exactly parallel to the up vector;
+    // dragging still orbits freely from here (phi clamped to [0.05, PI-0.05]
+    // during drag, same as the lower bound used here).
+    const orbit = { theta: -Math.PI / 2, phi: 0.06, radius: 100, target: new THREE.Vector3(0, 0, 0) };
     function applyOrbit() {
       const sinPhi = Math.sin(orbit.phi);
       camera.position.set(
@@ -1243,5 +1394,6 @@ if (typeof module !== "undefined" && module.exports) {
     pathLength,
     samplePathAt,
     applyDashPattern,
+    rightAngleSquarePoints,
   };
 }
