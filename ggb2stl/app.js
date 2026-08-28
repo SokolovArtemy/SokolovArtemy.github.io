@@ -210,7 +210,7 @@ function updateFieldAvailability() {
   const addPlate = document.getElementById("addPlate").checked;
   const plateFieldset = document.getElementById("plateOptions");
   const disable = mode !== "relief" || !addPlate;
-  plateFieldset.querySelectorAll('input[type="number"]').forEach((i) => (i.disabled = disable));
+  plateFieldset.querySelectorAll('input[type="number"], input[type="checkbox"]:not(#addPlate)').forEach((i) => (i.disabled = disable));
   plateFieldset.style.opacity = disable ? 0.45 : 1;
   document.getElementById("addPlate").disabled = mode !== "relief";
 }
@@ -598,6 +598,17 @@ function extractGeometry() {
   const angleArcSizeByLabel = {};
   const emphasizeRightAngleByLabel = {};
   const lineStyleTypeByLabel = {};
+  // GeoGebra's own per-object line "Thickness" (Object Properties -> Style,
+  // slider 1-13, default 5 -- confirmed via GeoGebra's XML schema, which
+  // documents <lineStyle thickness="..." type="..."/> as a single tag: the
+  // same element we already read the dash type from, so this is a free
+  // addition to the existing pass, no extra scan needed). We read it so
+  // segments/lines/rays/circles/ellipses/arcs/angle-arcs the user has made
+  // thicker or thinner *inside* GeoGebra come out proportionally
+  // thicker/thinner in the printed model too, relative to the app's own
+  // "Радиус отрезка" (or "Толщина дуги угла") base setting -- same pattern
+  // already used for point size (getPointSize) and angle arcSize.
+  const lineThicknessByLabel = {};
   if (xmlDoc) {
     const elements = xmlDoc.getElementsByTagName("element");
     for (let ei = 0; ei < elements.length; ei++) {
@@ -619,11 +630,16 @@ function extractGeometry() {
         if (lineStyleEls.length > 0) {
           const t = parseInt(lineStyleEls[0].getAttribute("type"), 10);
           if (!isNaN(t)) lineStyleTypeByLabel[label] = t;
+          const th = parseFloat(lineStyleEls[0].getAttribute("thickness"));
+          if (isFinite(th) && th > 0) lineThicknessByLabel[label] = th;
         }
       }
     }
   }
   function getLineType(label) { return (label && lineStyleTypeByLabel[label]) || 0; }
+  // 1 = GeoGebra's default line thickness (5); absent/invalid falls back to
+  // that default, i.e. factor 1 (no change from today's fixed-radius behavior).
+  function getThicknessFactor(label) { return ((label && lineThicknessByLabel[label]) || 5) / 5; }
 
   if (xmlDoc) {
     const commands = xmlDoc.getElementsByTagName("command");
@@ -742,10 +758,11 @@ function extractGeometry() {
             if (resolved.r > 1e-9 && maxRadius > 1e-9) {
               const sizeFactor = (outLabel && angleArcSizeByLabel[outLabel]) || 1;
               const lineType = getLineType(outLabel);
+              const thicknessFactor = getThicknessFactor(outLabel);
               const sweep = resolved.endAngle - resolved.startAngle;
               const emphasize = outLabel ? emphasizeRightAngleByLabel[outLabel] !== false : true;
               const isRightAngle = emphasize && Math.abs(sweep - Math.PI / 2) < RIGHT_ANGLE_EPS;
-              angleArcs.push({ cx: B.x, cy: B.y, startAngle: resolved.startAngle, endAngle: resolved.endAngle, maxRadius, sizeFactor, lineType, isRightAngle });
+              angleArcs.push({ cx: B.x, cy: B.y, startAngle: resolved.startAngle, endAngle: resolved.endAngle, maxRadius, sizeFactor, lineType, thicknessFactor, isRightAngle });
               return true;
             }
           }
@@ -912,56 +929,59 @@ function extractGeometry() {
 
   const resolvedEdgesAll = edgeLabelPairs
     .filter(([a, b]) => allPointCoords[a] && allPointCoords[b])
-    .map(([a, b, ownLabel]) => ({ a: allPointCoords[a], b: allPointCoords[b], labelA: a, labelB: b, lineType: getLineType(ownLabel) }));
+    .map(([a, b, ownLabel]) => ({ a: allPointCoords[a], b: allPointCoords[b], labelA: a, labelB: b, lineType: getLineType(ownLabel), t: getThicknessFactor(ownLabel) }));
   const resolvedEdges = resolvedEdgesAll.filter((e) => e.lineType === 0);
   for (const e of resolvedEdgesAll) {
-    if (e.lineType !== 0) dashedPaths.push({ points: [e.a, e.b], closed: false, lineType: e.lineType });
+    if (e.lineType !== 0) dashedPaths.push({ points: [e.a, e.b], closed: false, lineType: e.lineType, t: e.t });
   }
 
-  const rawEdges = []; // {a:{x,y}, b:{x,y}}
-  const circleJoints = []; // {x,y} — synthetic vertices where a circle's polyline approximation bends
+  const rawEdges = []; // {a:{x,y}, b:{x,y}, t}
+  const circleJoints = []; // {x,y,t} — synthetic vertices where a circle's polyline approximation bends
 
   for (const c of circles) {
     const lineType = getLineType(c.label);
+    const t = getThicknessFactor(c.label);
     const { points: cPts, edges: cEdges } = circleToPolyline(c.x, c.y, c.r, 48);
     if (lineType === 0) {
-      for (const [p0, p1] of cEdges) rawEdges.push({ a: p0, b: p1 });
-      for (const p of cPts) circleJoints.push(p);
+      for (const [p0, p1] of cEdges) rawEdges.push({ a: p0, b: p1, t });
+      for (const p of cPts) circleJoints.push({ ...p, t });
     } else {
-      dashedPaths.push({ points: cPts, closed: true, lineType });
+      dashedPaths.push({ points: cPts, closed: true, lineType, t });
     }
   }
 
   for (const e of ellipses) {
     const lineType = getLineType(e.label);
+    const t = getThicknessFactor(e.label);
     const { points: ePts, edges: eEdges } = ellipseToPolyline(e.cx, e.cy, e.a, e.b, e.rot, 64);
     if (lineType === 0) {
-      for (const [p0, p1] of eEdges) rawEdges.push({ a: p0, b: p1 });
-      for (const p of ePts) circleJoints.push(p);
+      for (const [p0, p1] of eEdges) rawEdges.push({ a: p0, b: p1, t });
+      for (const p of ePts) circleJoints.push({ ...p, t });
     } else {
-      dashedPaths.push({ points: ePts, closed: true, lineType });
+      dashedPaths.push({ points: ePts, closed: true, lineType, t });
     }
   }
 
   for (const arc of arcs) {
     const lineType = getLineType(arc.label);
+    const t = getThicknessFactor(arc.label);
     const pointsPerFullCircle = arc.r > 0 ? 48 : 48;
     const { points: aPts, edges: aEdges } = arcToPolyline(arc.cx, arc.cy, arc.r, arc.startAngle, arc.endAngle, pointsPerFullCircle);
     if (lineType === 0) {
-      for (const [p0, p1] of aEdges) rawEdges.push({ a: p0, b: p1 });
-      for (const p of aPts) circleJoints.push(p);
+      for (const [p0, p1] of aEdges) rawEdges.push({ a: p0, b: p1, t });
+      for (const p of aPts) circleJoints.push({ ...p, t });
       if (arc.withRadii && aPts.length >= 2) {
         const center = { x: arc.cx, y: arc.cy };
-        rawEdges.push({ a: center, b: aPts[0] });
-        rawEdges.push({ a: center, b: aPts[aPts.length - 1] });
-        circleJoints.push(center);
+        rawEdges.push({ a: center, b: aPts[0], t });
+        rawEdges.push({ a: center, b: aPts[aPts.length - 1], t });
+        circleJoints.push({ ...center, t });
       }
     } else {
-      dashedPaths.push({ points: aPts, closed: false, lineType });
+      dashedPaths.push({ points: aPts, closed: false, lineType, t });
       if (arc.withRadii && aPts.length >= 2) {
         const center = { x: arc.cx, y: arc.cy };
-        dashedPaths.push({ points: [center, aPts[0]], closed: false, lineType });
-        dashedPaths.push({ points: [center, aPts[aPts.length - 1]], closed: false, lineType });
+        dashedPaths.push({ points: [center, aPts[0]], closed: false, lineType, t });
+        dashedPaths.push({ points: [center, aPts[aPts.length - 1]], closed: false, lineType, t });
       }
     }
   }
@@ -985,16 +1005,18 @@ function extractGeometry() {
     const seg = clipLineToBox(l.px, l.py, l.dx, l.dy, clipBox[0], clipBox[1], clipBox[2], clipBox[3]);
     if (!seg) { skipped.push(`Прямая "${l.label || "?"}" не пересекает область модели — пропущена.`); continue; }
     const lineType = getLineType(l.label);
-    if (lineType === 0) rawEdges.push({ a: { x: seg.ax, y: seg.ay }, b: { x: seg.bx, y: seg.by } });
-    else dashedPaths.push({ points: [{ x: seg.ax, y: seg.ay }, { x: seg.bx, y: seg.by }], closed: false, lineType });
+    const t = getThicknessFactor(l.label);
+    if (lineType === 0) rawEdges.push({ a: { x: seg.ax, y: seg.ay }, b: { x: seg.bx, y: seg.by }, t });
+    else dashedPaths.push({ points: [{ x: seg.ax, y: seg.ay }, { x: seg.bx, y: seg.by }], closed: false, lineType, t });
   }
   for (const r of rayDefs) {
     if (Math.hypot(r.dx, r.dy) < 1e-9) { skipped.push(`Луч "${r.label || "?"}" вырожден (совпадающие точки).`); continue; }
     const seg = clipRayToBox(r.px, r.py, r.dx, r.dy, clipBox[0], clipBox[1], clipBox[2], clipBox[3]);
     if (!seg) { skipped.push(`Луч "${r.label || "?"}" не пересекает область модели — пропущен.`); continue; }
     const lineType = getLineType(r.label);
-    if (lineType === 0) rawEdges.push({ a: { x: seg.ax, y: seg.ay }, b: { x: seg.bx, y: seg.by } });
-    else dashedPaths.push({ points: [{ x: seg.ax, y: seg.ay }, { x: seg.bx, y: seg.by }], closed: false, lineType });
+    const t = getThicknessFactor(r.label);
+    if (lineType === 0) rawEdges.push({ a: { x: seg.ax, y: seg.ay }, b: { x: seg.bx, y: seg.by }, t });
+    else dashedPaths.push({ points: [{ x: seg.ax, y: seg.ay }, { x: seg.bx, y: seg.by }], closed: false, lineType, t });
   }
 
   const points = Array.from(visiblePointLabels).map((label) => ({
@@ -1031,7 +1053,85 @@ function readParams() {
     segsAlong: parseInt(document.getElementById("segsAlong").value, 10) || 8,
     mode: document.querySelector('input[name="mode"]:checked').value,
     addPlate: document.getElementById("addPlate").checked,
+    addHangingHole: document.getElementById("addHangingHole").checked,
+    hangingHoleWidth: parseFloat(document.getElementById("hangingHoleWidth").value) || 6,
   };
+}
+
+// ---- Hanging hole (relief mode, only with a plate) -------------------------
+//
+// An earlier version of this feature printed prongs sticking out *behind*
+// the plate's flat back face, engaging a Skädis slot directly via an
+// insert-and-drop mechanism. That's mechanically sound, but it means the
+// plate no longer has a flat print bottom: this app's whole design relies on
+// printing with the flat back face down on the bed (so the domes/ridges on
+// the front are self-supporting, no supports needed) -- with prongs sticking
+// out *past* that back face, only the two small prong tips would actually
+// touch the bed, leaving the entire plate floating above it. That's exactly
+// the problem the model preview showed (and why the joint looked like
+// disconnected floating cubes once the plate was no longer the lowest part
+// of the model).
+//
+// This version instead punches a plain rectangular hole through the plate
+// near the top edge -- an ordinary "keyring tag" hanging hole. It stays
+// entirely within the plate's own existing thickness (Z from plateBackZ to
+// 0, exactly like the rest of the plate), so it adds nothing behind the flat
+// back face at all -- the print's flat bottom is completely unaffected. To
+// hang the model, thread a standard Skädis peg/hook (IKEA sells plain ones
+// separately) -- or literally any small hook, nail, wire, or zip tie --
+// through the hole. That trades "no separate parts" for a print that
+// actually sits flat on the bed, which is the right trade for FDM printing.
+const HANGING_HOLE_HEIGHT_RATIO = 1.6; // hole height = hole width * this ratio
+const HANGING_HOLE_FRAME_MM = 3; // solid material kept around the hole on every side, for strength
+const HANGING_HOLE_MIN_WIDTH_MM = 3;
+const HANGING_HOLE_EDGE_CLEARANCE_MM = 2; // keep the hole's frame off the plate's own side edges
+const HANGING_HOLE_OVERLAP_MM = 2; // how far the frame dips into the existing plate, for a solid connection
+
+// Pure geometry: given the plate's final (margin-included) left/right X
+// edges and the requested hole width, decides whether the hole fits and
+// returns its size. Returns { fitted: false } if the plate is too narrow for
+// any reasonable hole + surrounding frame.
+function computeHangingHole(plateMinX, plateMaxX, holeWidthRequested) {
+  const plateWidth = plateMaxX - plateMinX;
+  const centerX = (plateMinX + plateMaxX) / 2;
+  const minTotalWidth = HANGING_HOLE_MIN_WIDTH_MM + 2 * HANGING_HOLE_FRAME_MM + 2 * HANGING_HOLE_EDGE_CLEARANCE_MM;
+  if (!(plateWidth >= minTotalWidth)) {
+    return { fitted: false };
+  }
+  const maxHoleWidth = plateWidth - 2 * HANGING_HOLE_FRAME_MM - 2 * HANGING_HOLE_EDGE_CLEARANCE_MM;
+  const holeWidth = Math.max(HANGING_HOLE_MIN_WIDTH_MM, Math.min(holeWidthRequested, maxHoleWidth));
+  const holeHeight = holeWidth * HANGING_HOLE_HEIGHT_RATIO;
+  return {
+    fitted: true,
+    reduced: holeWidth < holeWidthRequested - 1e-9,
+    holeWidth,
+    holeHeight,
+    centerX,
+    frameWidth: holeWidth + 2 * HANGING_HOLE_FRAME_MM,
+    frameHeight: holeHeight + 2 * HANGING_HOLE_FRAME_MM,
+  };
+}
+
+// Builds the box-mesh definitions (as plain {minX,minY,minZ,maxX,maxY,maxZ}
+// objects, MeshGen.boxMesh's argument order) for the 4 strips (top/bottom/
+// left/right) that together form a closed frame around the hole -- i.e. an
+// ordinary through-hole, entirely additive (no boolean subtraction needed),
+// given where the frame's bottom edge sits (frameBottomY) and the plate's
+// own Z-range (plateBackZ..0, matching the rest of the plate exactly).
+function hangingHoleBoxes(hole, frameBottomY, plateBackZ) {
+  const frameTopY = frameBottomY + hole.frameHeight;
+  const holeBottomY = frameBottomY + HANGING_HOLE_FRAME_MM;
+  const holeTopY = holeBottomY + hole.holeHeight;
+  const holeLeftX = hole.centerX - hole.holeWidth / 2;
+  const holeRightX = hole.centerX + hole.holeWidth / 2;
+  const frameLeftX = hole.centerX - hole.frameWidth / 2;
+  const frameRightX = hole.centerX + hole.frameWidth / 2;
+  return [
+    { minX: frameLeftX, maxX: frameRightX, minY: holeTopY, maxY: frameTopY, minZ: plateBackZ, maxZ: 0 }, // top strip
+    { minX: frameLeftX, maxX: frameRightX, minY: frameBottomY, maxY: holeBottomY, minZ: plateBackZ, maxZ: 0 }, // bottom strip
+    { minX: frameLeftX, maxX: holeLeftX, minY: holeBottomY, maxY: holeTopY, minZ: plateBackZ, maxZ: 0 }, // left strip
+    { minX: holeRightX, maxX: frameRightX, minY: holeBottomY, maxY: holeTopY, minZ: plateBackZ, maxZ: 0 }, // right strip
+  ];
 }
 
 function buildScene() {
@@ -1065,36 +1165,41 @@ function buildScene() {
     const scaledEdges = scene.edges.map((e) => ({
       ax: e.a.x * p.mmPerUnit, ay: e.a.y * p.mmPerUnit,
       bx: e.b.x * p.mmPerUnit, by: e.b.y * p.mmPerUnit,
+      t: e.t || 1,
     }));
-    const scaledJoints = scene.circleJoints.map((j) => ({ x: j.x * p.mmPerUnit, y: j.y * p.mmPerUnit }));
+    const scaledJoints = scene.circleJoints.map((j) => ({ x: j.x * p.mmPerUnit, y: j.y * p.mmPerUnit, t: j.t || 1 }));
 
     // Objects with a non-solid GeoGebra line style (dashed short/long, dotted,
     // dash-dot) become an alternating sequence of short ridges + small dot
-    // bumps, using the same "Радиус отрезка" as ordinary solid edges. The
-    // dash/gap unit length scales with that radius so thicker ridges get
-    // proportionally longer dashes.
-    const dashBaseUnitRaw = (p.segmentRadius * 5) / p.mmPerUnit;
+    // bumps, using the same "Радиус отрезка" (scaled by that object's own
+    // thickness, dp.t) as ordinary solid edges. The dash/gap unit length
+    // scales with that radius so thicker ridges get proportionally longer
+    // dashes.
     const scaledDashEdges = [];
     const scaledDashDots = [];
     for (const dp of scene.dashedPaths || []) {
+      const t = dp.t || 1;
+      const dashBaseUnitRaw = (p.segmentRadius * t * 5) / p.mmPerUnit;
       const tokens = dashTokensForLineType(dp.lineType, dashBaseUnitRaw);
       if (!tokens) continue;
       const { onSegments, dots } = applyDashPattern(dp.points, dp.closed, tokens);
       for (const seg of onSegments) {
-        scaledDashEdges.push({ ax: seg.a.x * p.mmPerUnit, ay: seg.a.y * p.mmPerUnit, bx: seg.b.x * p.mmPerUnit, by: seg.b.y * p.mmPerUnit });
+        scaledDashEdges.push({ ax: seg.a.x * p.mmPerUnit, ay: seg.a.y * p.mmPerUnit, bx: seg.b.x * p.mmPerUnit, by: seg.b.y * p.mmPerUnit, t });
       }
-      for (const d of dots) scaledDashDots.push({ x: d.x * p.mmPerUnit, y: d.y * p.mmPerUnit });
+      for (const d of dots) scaledDashDots.push({ x: d.x * p.mmPerUnit, y: d.y * p.mmPerUnit, t });
     }
 
     // Angle-marking arcs get their own (usually much smaller/thinner) radius
     // and ridge thickness -- sampled here, in raw units, then scaled like
     // everything else. Each angle's own GeoGebra "Size" property (a.sizeFactor,
     // 1 = GeoGebra's default of 30) scales the base radius up/down relative to
-    // the other angles, so angles you've sized differently inside GeoGebra
-    // print differently too. The in-plane radius is then clamped to 90% of
-    // the shorter adjacent side so the mark never overshoots a short segment.
+    // the other angles, and its own GeoGebra line "Thickness" (a.thicknessFactor,
+    // 1 = GeoGebra's default of 5) scales the printed ridge thickness relative
+    // to the app's "Толщина дуги угла" base setting, so angles you've sized or
+    // thickened differently inside GeoGebra print differently too. The
+    // in-plane radius is then clamped to 90% of the shorter adjacent side so
+    // the mark never overshoots a short segment.
     const angleArcRadiusRaw = p.angleArcRadius / p.mmPerUnit;
-    const angleDashBaseUnitRaw = (p.angleArcThickness * 5) / p.mmPerUnit;
     const scaledAngleEdges = [];
     const scaledAngleJoints = [];
     const scaledAngleDashEdges = [];
@@ -1102,6 +1207,7 @@ function buildScene() {
     for (const a of scene.angleArcs || []) {
       const r = Math.min(angleArcRadiusRaw * (a.sizeFactor || 1), a.maxRadius * 0.9);
       if (r <= 1e-9) continue;
+      const t = a.thicknessFactor || 1;
       // A right angle (exactly 90°, GeoGebra's "emphasize right angle"
       // default) is marked with a small square corner instead of an arc --
       // same shape as GeoGebra draws it on screen.
@@ -1111,18 +1217,19 @@ function buildScene() {
       const rawPts = shape.points;
       const rawEdgesForArc = shape.edges;
       const closed = !!a.isRightAngle;
+      const angleDashBaseUnitRaw = (p.angleArcThickness * t * 5) / p.mmPerUnit;
       const tokens = dashTokensForLineType(a.lineType, angleDashBaseUnitRaw);
       if (!tokens) {
         for (const [p0, p1] of rawEdgesForArc) {
-          scaledAngleEdges.push({ ax: p0.x * p.mmPerUnit, ay: p0.y * p.mmPerUnit, bx: p1.x * p.mmPerUnit, by: p1.y * p.mmPerUnit });
+          scaledAngleEdges.push({ ax: p0.x * p.mmPerUnit, ay: p0.y * p.mmPerUnit, bx: p1.x * p.mmPerUnit, by: p1.y * p.mmPerUnit, t });
         }
-        for (const pt of rawPts) scaledAngleJoints.push({ x: pt.x * p.mmPerUnit, y: pt.y * p.mmPerUnit });
+        for (const pt of rawPts) scaledAngleJoints.push({ x: pt.x * p.mmPerUnit, y: pt.y * p.mmPerUnit, t });
       } else {
         const { onSegments, dots } = applyDashPattern(rawPts, closed, tokens);
         for (const seg of onSegments) {
-          scaledAngleDashEdges.push({ ax: seg.a.x * p.mmPerUnit, ay: seg.a.y * p.mmPerUnit, bx: seg.b.x * p.mmPerUnit, by: seg.b.y * p.mmPerUnit });
+          scaledAngleDashEdges.push({ ax: seg.a.x * p.mmPerUnit, ay: seg.a.y * p.mmPerUnit, bx: seg.b.x * p.mmPerUnit, by: seg.b.y * p.mmPerUnit, t });
         }
-        for (const d of dots) scaledAngleDashDots.push({ x: d.x * p.mmPerUnit, y: d.y * p.mmPerUnit });
+        for (const d of dots) scaledAngleDashDots.push({ x: d.x * p.mmPerUnit, y: d.y * p.mmPerUnit, t });
       }
     }
 
@@ -1151,14 +1258,41 @@ function buildScene() {
         minX = Math.min(minX, d.x); maxX = Math.max(maxX, d.x);
         minY = Math.min(minY, d.y); maxY = Math.max(maxY, d.y);
       }
-      triangles.push(...MeshGen.boxMesh(minX - p.plateMargin, minY - p.plateMargin, -p.plateThickness, maxX + p.plateMargin, maxY + p.plateMargin, 0));
+      const plateMinX = minX - p.plateMargin, plateMaxX = maxX + p.plateMargin;
+      const plateMinY = minY - p.plateMargin;
+      let plateMaxY = maxY + p.plateMargin;
+      const plateBackZ = -p.plateThickness;
+
+      if (p.addHangingHole) {
+        const hole = computeHangingHole(plateMinX, plateMaxX, p.hangingHoleWidth);
+        if (!hole.fitted) {
+          warnings.push(
+            `Отверстие для подвешивания не добавлено: подложка слишком узкая (нужно минимум ~${HANGING_HOLE_MIN_WIDTH_MM + 2 * HANGING_HOLE_FRAME_MM + 2 * HANGING_HOLE_EDGE_CLEARANCE_MM} мм ширины подложки с текущим отступом от краёв).`
+          );
+        } else {
+          if (hole.reduced) {
+            warnings.push(`Ширина отверстия для подвешивания уменьшена до ${hole.holeWidth.toFixed(1)} мм, чтобы оно поместилось на подложке (запрошено ${p.hangingHoleWidth} мм).`);
+          }
+          // The frame sticks up above the plate's own top edge, dipping
+          // HANGING_HOLE_OVERLAP_MM back down into the existing plate for a
+          // solid connection -- it does NOT change plateMaxY/the plate's own
+          // box at all, since (unlike the old prong design) it never needs
+          // to reach past the plate's own flat back face.
+          const frameBottomY = maxY + p.plateMargin - HANGING_HOLE_OVERLAP_MM;
+          for (const box of hangingHoleBoxes(hole, frameBottomY, plateBackZ)) {
+            triangles.push(...MeshGen.boxMesh(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ));
+          }
+        }
+      }
+
+      triangles.push(...MeshGen.boxMesh(plateMinX, plateMinY, plateBackZ, plateMaxX, plateMaxY, 0));
     }
 
     for (const pt of scaledPoints) triangles.push(...MeshGen.hemisphereMesh(pt.x, pt.y, z0, p.pointRadius * pt.sizeFactor, p.segsAround, p.segsAlong));
-    for (const e of scaledEdges) triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.segmentRadius, p.segsAround));
-    for (const j of scaledJoints) triangles.push(...MeshGen.hemisphereMesh(j.x, j.y, z0, p.segmentRadius, p.segsAround, Math.max(4, Math.round(p.segsAlong / 2))));
-    for (const e of scaledAngleEdges) triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.angleArcThickness, p.segsAround));
-    for (const j of scaledAngleJoints) triangles.push(...MeshGen.hemisphereMesh(j.x, j.y, z0, p.angleArcThickness, p.segsAround, Math.max(4, Math.round(p.segsAlong / 2))));
+    for (const e of scaledEdges) triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.segmentRadius * e.t, p.segsAround));
+    for (const j of scaledJoints) triangles.push(...MeshGen.hemisphereMesh(j.x, j.y, z0, p.segmentRadius * j.t, p.segsAround, Math.max(4, Math.round(p.segsAlong / 2))));
+    for (const e of scaledAngleEdges) triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.angleArcThickness * e.t, p.segsAround));
+    for (const j of scaledAngleJoints) triangles.push(...MeshGen.hemisphereMesh(j.x, j.y, z0, p.angleArcThickness * j.t, p.segsAround, Math.max(4, Math.round(p.segsAlong / 2))));
 
     // Dashed/dotted ridges: each "on" segment is its own short isolated
     // cylinder (no shared joint with neighbours, since a gap separates them),
@@ -1166,17 +1300,17 @@ function buildScene() {
     // bumps -- more print-friendly than a sliver-thin cylinder.
     const dashHemiSegs = Math.max(4, Math.round(p.segsAlong / 2));
     for (const e of scaledDashEdges) {
-      triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.segmentRadius, p.segsAround));
-      triangles.push(...MeshGen.hemisphereMesh(e.ax, e.ay, z0, p.segmentRadius, p.segsAround, dashHemiSegs));
-      triangles.push(...MeshGen.hemisphereMesh(e.bx, e.by, z0, p.segmentRadius, p.segsAround, dashHemiSegs));
+      triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.segmentRadius * e.t, p.segsAround));
+      triangles.push(...MeshGen.hemisphereMesh(e.ax, e.ay, z0, p.segmentRadius * e.t, p.segsAround, dashHemiSegs));
+      triangles.push(...MeshGen.hemisphereMesh(e.bx, e.by, z0, p.segmentRadius * e.t, p.segsAround, dashHemiSegs));
     }
-    for (const d of scaledDashDots) triangles.push(...MeshGen.hemisphereMesh(d.x, d.y, z0, p.segmentRadius, p.segsAround, dashHemiSegs));
+    for (const d of scaledDashDots) triangles.push(...MeshGen.hemisphereMesh(d.x, d.y, z0, p.segmentRadius * d.t, p.segsAround, dashHemiSegs));
     for (const e of scaledAngleDashEdges) {
-      triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.angleArcThickness, p.segsAround));
-      triangles.push(...MeshGen.hemisphereMesh(e.ax, e.ay, z0, p.angleArcThickness, p.segsAround, dashHemiSegs));
-      triangles.push(...MeshGen.hemisphereMesh(e.bx, e.by, z0, p.angleArcThickness, p.segsAround, dashHemiSegs));
+      triangles.push(...MeshGen.halfCylinderMesh(e.ax, e.ay, z0, e.bx, e.by, z0, p.angleArcThickness * e.t, p.segsAround));
+      triangles.push(...MeshGen.hemisphereMesh(e.ax, e.ay, z0, p.angleArcThickness * e.t, p.segsAround, dashHemiSegs));
+      triangles.push(...MeshGen.hemisphereMesh(e.bx, e.by, z0, p.angleArcThickness * e.t, p.segsAround, dashHemiSegs));
     }
-    for (const d of scaledAngleDashDots) triangles.push(...MeshGen.hemisphereMesh(d.x, d.y, z0, p.angleArcThickness, p.segsAround, dashHemiSegs));
+    for (const d of scaledAngleDashDots) triangles.push(...MeshGen.hemisphereMesh(d.x, d.y, z0, p.angleArcThickness * d.t, p.segsAround, dashHemiSegs));
   } else {
     // full 3D mode: real spheres/cylinders, true (x,y,z) positions, no plate.
     // Circles are not yet supported in this mode (orientation is ambiguous
@@ -1191,7 +1325,7 @@ function buildScene() {
       triangles.push(...MeshGen.cylinderMesh(
         e.a.x * p.mmPerUnit, e.a.y * p.mmPerUnit, (e.a.z || 0) * p.mmPerUnit,
         e.b.x * p.mmPerUnit, e.b.y * p.mmPerUnit, (e.b.z || 0) * p.mmPerUnit,
-        p.segmentRadius, p.segsAround
+        p.segmentRadius * (e.t || 1), p.segsAround
       ));
     }
     // Dashed/dotted line styles aren't modeled in "Полный 3D" -- every
@@ -1395,5 +1529,13 @@ if (typeof module !== "undefined" && module.exports) {
     samplePathAt,
     applyDashPattern,
     rightAngleSquarePoints,
+    computeHangingHole,
+    hangingHoleBoxes,
+    buildScene,
+    HANGING_HOLE_HEIGHT_RATIO,
+    HANGING_HOLE_FRAME_MM,
+    HANGING_HOLE_MIN_WIDTH_MM,
+    HANGING_HOLE_EDGE_CLEARANCE_MM,
+    HANGING_HOLE_OVERLAP_MM,
   };
 }
