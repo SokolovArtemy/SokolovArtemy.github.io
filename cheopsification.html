@@ -1,0 +1,1008 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Хеопсификация</title>
+  <style>
+    :root {
+      --ink: #1f2822;
+      --muted: #69736c;
+      --line: #dce2dc;
+      --paper: #fffef9;
+      --canvas: #f2f4ef;
+      --accent: #235b3a;
+      --accent-hover: #19472c;
+      --accent-soft: #e5f0e8;
+      --warning: #9b5d16;
+      --error: #a73a35;
+      --shadow: 0 18px 55px rgba(32, 54, 39, 0.08);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 16% -10%, rgba(185, 214, 192, 0.55), transparent 30rem),
+        var(--canvas);
+      font: 15px/1.5 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, input, textarea { font: inherit; }
+
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid rgba(35, 91, 58, 0.25);
+      outline-offset: 2px;
+    }
+
+    .shell {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 40px;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font: 700 clamp(30px, 4vw, 48px)/1.08 Georgia, "Times New Roman", serif;
+      letter-spacing: -0.025em;
+    }
+
+    .subtitle {
+      max-width: 660px;
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.75fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .card {
+      border: 1px solid rgba(202, 211, 204, 0.85);
+      border-radius: var(--radius);
+      background: rgba(255, 254, 249, 0.94);
+      box-shadow: var(--shadow);
+    }
+
+    .editor-card { overflow: hidden; }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .toolbar-title {
+      min-width: 0;
+    }
+
+    .toolbar-title strong { display: block; }
+
+    #file-name {
+      display: block;
+      overflow: hidden;
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      flex: 0 0 auto;
+      gap: 8px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 10px 15px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      cursor: pointer;
+      font-weight: 750;
+      transition: 140ms ease;
+      transition-property: background, border-color, color, transform;
+    }
+
+    .button:active { transform: translateY(1px); }
+
+    .button.secondary {
+      border-color: var(--line);
+      color: var(--ink);
+      background: #fff;
+    }
+
+    .button.secondary:hover { background: #f7f8f5; }
+
+    .button.ghost {
+      padding-inline: 10px;
+      color: var(--muted);
+      background: transparent;
+    }
+
+    .button.ghost:hover { color: var(--ink); background: #f2f4ef; }
+
+    .button.primary {
+      width: 100%;
+      min-height: 50px;
+      color: #fff;
+      background: var(--accent);
+      font-size: 16px;
+    }
+
+    .button.primary:hover { background: var(--accent-hover); }
+
+    .button.primary:disabled {
+      cursor: not-allowed;
+      color: #8e9891;
+      background: #e0e4e0;
+      transform: none;
+    }
+
+    .editor-wrap {
+      position: relative;
+      min-height: 520px;
+    }
+
+    textarea {
+      display: block;
+      width: 100%;
+      min-height: 520px;
+      resize: vertical;
+      border: 0;
+      padding: 20px 22px 26px;
+      color: #26302a;
+      background: transparent;
+      font: 14px/1.62 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      tab-size: 4;
+    }
+
+    textarea::placeholder { color: #9aa29c; }
+
+    textarea:focus { outline: 0; }
+
+    .drop-overlay {
+      position: absolute;
+      inset: 10px;
+      display: none;
+      place-items: center;
+      border: 2px dashed #6b9879;
+      border-radius: 13px;
+      color: var(--accent);
+      background: rgba(239, 248, 241, 0.96);
+      font-weight: 800;
+      pointer-events: none;
+    }
+
+    body.dragging .drop-overlay { display: grid; }
+
+    .attachments {
+      padding: 13px 16px 15px;
+      border-top: 1px solid var(--line);
+      background: rgba(246, 248, 244, 0.72);
+    }
+
+    .attachments-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .file-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .file-chip {
+      display: inline-flex;
+      max-width: 100%;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 8px 6px 10px;
+      border: 1px solid #d7dfd8;
+      border-radius: 999px;
+      color: #435048;
+      background: #fff;
+      font-size: 12px;
+    }
+
+    .file-chip-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chip-remove {
+      display: grid;
+      width: 20px;
+      height: 20px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      color: #6f7972;
+      background: #edf0ed;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .chip-remove:hover { color: #fff; background: var(--error); }
+
+    .attachments-empty {
+      color: #929a94;
+      font-size: 12px;
+    }
+
+    aside {
+      display: grid;
+      gap: 14px;
+    }
+
+    .summary-card { padding: 20px; }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 24px;
+      margin-bottom: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: #a6aea8;
+    }
+
+    .status.success { color: var(--accent); }
+    .status.success .status-dot { background: #3b8c58; }
+    .status.error { color: var(--error); }
+    .status.error .status-dot { background: var(--error); }
+
+    .summary-label {
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .module-title {
+      min-height: 56px;
+      margin: 0 0 16px;
+      font: 700 23px/1.2 Georgia, "Times New Roman", serif;
+    }
+
+    .count-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .count-row strong { color: var(--ink); }
+
+    .count-row + .count-row { padding-top: 0; border-top: 0; }
+
+    .task-preview {
+      max-height: 250px;
+      margin: 0 -4px 18px 0;
+      overflow: auto;
+      scrollbar-color: #c7d0c8 transparent;
+    }
+
+    .task-item {
+      display: grid;
+      grid-template-columns: 27px minmax(0, 1fr);
+      gap: 9px;
+      padding: 10px 4px;
+      border-top: 1px solid #edf0ec;
+    }
+
+    .task-number {
+      display: grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      border-radius: 7px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .task-text {
+      display: -webkit-box;
+      overflow: hidden;
+      color: #4d5850;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+    }
+
+    .empty-preview {
+      padding: 28px 10px 32px;
+      color: #89928b;
+      text-align: center;
+    }
+
+    .message {
+      display: none;
+      margin: 0 0 14px;
+      padding: 11px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+    }
+
+    .message.visible { display: block; }
+    .message.error { color: #8f2d2a; background: #fbeceb; }
+    .message.success { color: #245f39; background: #e8f3eb; }
+
+    .warnings {
+      display: none;
+      margin: 0 0 14px;
+      border: 1px solid #ecd6b8;
+      border-radius: 10px;
+      background: #fff8ed;
+    }
+
+    .warnings.visible { display: block; }
+
+    .warnings summary {
+      padding: 10px 12px;
+      color: var(--warning);
+      font-size: 12px;
+    }
+
+    .warnings ul {
+      max-height: 190px;
+      margin: 0;
+      overflow: auto;
+      padding: 0 16px 12px 30px;
+      color: #76532c;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .warnings li + li { margin-top: 5px; }
+
+    details.card { overflow: hidden; }
+
+    summary {
+      padding: 16px 18px;
+      cursor: pointer;
+      font-weight: 800;
+      list-style: none;
+    }
+
+    summary::-webkit-details-marker { display: none; }
+
+    summary::after {
+      float: right;
+      color: var(--muted);
+      content: "+";
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    details[open] summary::after { content: "−"; }
+
+    .settings {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      padding: 0 18px 18px;
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+    }
+
+    .field.wide { grid-column: 1 / -1; }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 8px 10px;
+      color: var(--ink);
+      background: #fff;
+    }
+
+    .settings-note {
+      grid-column: 1 / -1;
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    @media (max-width: 860px) {
+      .shell { width: min(100% - 20px, 720px); padding-top: 20px; }
+      header { display: block; }
+      .workspace { grid-template-columns: 1fr; }
+      .editor-wrap, textarea { min-height: 430px; }
+      .task-preview { max-height: 210px; }
+    }
+
+    @media (max-width: 520px) {
+      .toolbar { align-items: flex-start; }
+      .toolbar-actions { flex-direction: column; }
+      .button.secondary, .button.ghost { min-height: 36px; padding-block: 7px; }
+      .settings { grid-template-columns: 1fr; }
+      .field.wide, .settings-note { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <!-- <p class="eyebrow">Конвертер листиков</p> -->
+        <h1>Хеопсификация</h1>
+        <p class="subtitle">Добавьте TeX в Юликовском шаблоне и, если нужны, картинки. Страница распарсит задачи, подпункты и теорию, а затем соберёт готовый ZIP для Хеопса.</p>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <div class="card editor-card">
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <strong>Исходник и картинки</strong>
+            <span id="file-name">TeX не выбран · изображений нет</span>
+          </div>
+          <div class="toolbar-actions">
+            <button class="button ghost" id="clear-button" type="button">Очистить</button>
+            <button class="button secondary" id="open-button" type="button">Выбрать файлы</button>
+            <input id="file-input" type="file" accept=".tex,.png,.jpg,.jpeg,.svg,.pdf,text/plain,image/png,image/jpeg,image/svg+xml,application/pdf" multiple hidden>
+          </div>
+        </div>
+        <div class="editor-wrap">
+          <textarea id="tex-input" spellcheck="false" aria-label="Исходный TeX" placeholder="Вставьте сюда содержимое .tex-файла…&#10;&#10;Нужны заголовок \worksheet{…} и задачи внутри \begin{problems} … \end{problems}."></textarea>
+          <div class="drop-overlay">Отпустите TeX и картинки здесь</div>
+        </div>
+        <div class="attachments">
+          <div class="attachments-head"><span>Приложенные изображения</span><span id="attachment-count">0</span></div>
+          <div class="file-chips" id="file-chips"><span class="attachments-empty">PNG, JPG и SVG можно выбрать вместе с TeX.</span></div>
+        </div>
+      </div>
+
+      <aside>
+        <section class="card summary-card" aria-live="polite">
+          <div class="status" id="status"><span class="status-dot"></span><span>Ожидаю исходник</span></div>
+          <div class="summary-label">Название модуля</div>
+          <h2 class="module-title" id="module-title">Пока не найдено</h2>
+          <div class="count-row"><span>Найдено задач</span><strong id="task-count">0</strong></div>
+          <div class="count-row"><span>Элементов «Теория»</span><strong id="text-count">0</strong></div>
+          <div class="task-preview" id="task-preview"><div class="empty-preview">Здесь появится краткая проверка содержимого архива.</div></div>
+          <div class="message" id="message"></div>
+          <details class="warnings" id="warnings"><summary id="warnings-title">Предупреждения</summary><ul id="warnings-list"></ul></details>
+          <button class="button primary" id="download-button" type="button" disabled>Скачать архив</button>
+        </section>
+
+        <!-- <details class="card">
+          <summary>Что переносится</summary>
+          <div class="settings">
+            <p class="settings-note">Задачи и подпункты, текст между блоками задач, ручная нумерация, формулы, базовое форматирование, ссылки, списки, сноски и одиночные изображения. Все задачи создаются с типом ответа «Развёрнутый».</p>
+            <p class="settings-note">PDF, таблицы и блоки с несколькими картинками пропускаются с предупреждением. Отсутствующая картинка из <code>\includegraphics</code> не позволяет собрать архив.</p>
+          </div>
+        </details> -->
+      </aside>
+    </section>
+
+  </main>
+
+  <script type="text/plain" id="legacy-converter">
+    (() => {
+      "use strict";
+
+      const ICON_HASH = "9e02c48663f5e509f05e08e9b220d30cb9263b41";
+      const ICON_SVG = '<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M9 20.2441V22.6082C9 22.826 9.17109 22.9971 9.38883 22.9971H11.753C11.854 22.9971 11.9551 22.9582 12.0251 22.8804L20.5173 14.396L17.601 11.4798L9.11665 19.9642C9.03888 20.0419 9 20.1352 9 20.2441ZM22.7725 12.1408C23.0758 11.8375 23.0758 11.3476 22.7725 11.0443L20.9528 9.22454C20.6495 8.92125 20.1596 8.92125 19.8563 9.22454L18.4331 10.6477L21.3494 13.5639L22.7725 12.1408V12.1408Z" fill="white"/>\n</svg>\n';
+
+      const elements = {
+        tex: document.querySelector("#tex-input"),
+        fileInput: document.querySelector("#file-input"),
+        fileName: document.querySelector("#file-name"),
+        open: document.querySelector("#open-button"),
+        clear: document.querySelector("#clear-button"),
+        download: document.querySelector("#download-button"),
+        status: document.querySelector("#status"),
+        title: document.querySelector("#module-title"),
+        count: document.querySelector("#task-count"),
+        preview: document.querySelector("#task-preview"),
+        message: document.querySelector("#message"),
+        moduleName: document.querySelector("#module-name"),
+        moduleId: document.querySelector("#module-id"),
+        blockId: document.querySelector("#block-id"),
+        taskId: document.querySelector("#task-id"),
+        versionId: document.querySelector("#version-id")
+      };
+
+      let currentParse = null;
+      let titleWasEdited = false;
+      let parseTimer = 0;
+
+      function stripComments(source) {
+        return source.split(/\r?\n/).map((line) => {
+          for (let i = 0; i < line.length; i += 1) {
+            if (line[i] !== "%") continue;
+            let slashes = 0;
+            for (let j = i - 1; j >= 0 && line[j] === "\\"; j -= 1) slashes += 1;
+            if (slashes % 2 === 0) return line.slice(0, i);
+          }
+          return line;
+        }).join("\n");
+      }
+
+      function commandArgument(source, command) {
+        const matcher = new RegExp("\\\\" + command + "\\s*\\{");
+        const match = matcher.exec(source);
+        if (!match) return "";
+        const openingBrace = match.index + match[0].lastIndexOf("{");
+        let depth = 0;
+        for (let i = openingBrace; i < source.length; i += 1) {
+          const char = source[i];
+          const escaped = i > 0 && source[i - 1] === "\\";
+          if (char === "{" && !escaped) depth += 1;
+          if (char === "}" && !escaped) {
+            depth -= 1;
+            if (depth === 0) return source.slice(openingBrace + 1, i).trim();
+          }
+        }
+        return "";
+      }
+
+      function normalizeTask(task) {
+        return task
+          .replace(/\r\n?/g, "\n")
+          .replace(/---/g, "-")
+          .replace(/[ \t]+$/gm, "")
+          .replace(/^\s+|\s+$/g, "")
+          .replace(/\n[ \t]*\n+/g, "\n");
+      }
+
+      function splitTopLevelItems(body) {
+        const token = /\\(begin|end)\s*\{([^}]+)\}|\\item(?:\s*\[[^\]]*\])?/g;
+        const stack = [];
+        const starts = [];
+        let match;
+        while ((match = token.exec(body)) !== null) {
+          if (match[1] === "begin") {
+            stack.push(match[2].trim());
+          } else if (match[1] === "end") {
+            if (stack.length) stack.pop();
+          } else if (stack.length === 0) {
+            starts.push({ start: match.index, contentStart: token.lastIndex });
+          }
+        }
+
+        return starts.map((item, index) => {
+          const end = index + 1 < starts.length ? starts[index + 1].start : body.length;
+          return normalizeTask(body.slice(item.contentStart, end));
+        }).filter(Boolean);
+      }
+
+      function parseTex(source) {
+        if (!source.trim()) return { title: "", tasks: [], error: "" };
+        const clean = stripComments(source);
+        const title = commandArgument(clean, "worksheet");
+        const begin = /\\begin\s*\{\s*problems\s*\}/.exec(clean);
+        if (!begin) {
+          return { title, tasks: [], error: "Не найдено начало списка \\begin{problems}." };
+        }
+        const afterBegin = begin.index + begin[0].length;
+        const tail = clean.slice(afterBegin);
+        const end = /\\end\s*\{\s*problems\s*\}/.exec(tail);
+        if (!end) {
+          return { title, tasks: [], error: "Не найден конец списка \\end{problems}." };
+        }
+        const tasks = splitTopLevelItems(tail.slice(0, end.index));
+        if (!tasks.length) {
+          return { title, tasks, error: "Внутри problems не найдено ни одной задачи \\item." };
+        }
+        return { title, tasks, error: "" };
+      }
+
+      function setStatus(text, kind = "") {
+        elements.status.className = "status" + (kind ? " " + kind : "");
+        elements.status.lastElementChild.textContent = text;
+      }
+
+      function showMessage(text = "", kind = "error") {
+        elements.message.textContent = text;
+        elements.message.className = "message" + (text ? " visible " + kind : "");
+      }
+
+      function render() {
+        currentParse = parseTex(elements.tex.value);
+        const hasSource = Boolean(elements.tex.value.trim());
+
+        if (!titleWasEdited && currentParse.title) elements.moduleName.value = currentParse.title;
+        const shownTitle = elements.moduleName.value.trim() || currentParse.title;
+        elements.title.textContent = shownTitle || "Пока не найдено";
+        elements.count.textContent = String(currentParse.tasks.length);
+        elements.preview.replaceChildren();
+
+        if (!currentParse.tasks.length) {
+          const empty = document.createElement("div");
+          empty.className = "empty-preview";
+          empty.textContent = hasSource ? "Задачи пока не распознаны." : "Здесь появится краткая проверка содержимого архива.";
+          elements.preview.append(empty);
+        } else {
+          currentParse.tasks.forEach((task, index) => {
+            const row = document.createElement("div");
+            row.className = "task-item";
+            const number = document.createElement("span");
+            number.className = "task-number";
+            number.textContent = String(index + 1);
+            const text = document.createElement("span");
+            text.className = "task-text";
+            text.textContent = task;
+            row.append(number, text);
+            elements.preview.append(row);
+          });
+        }
+
+        if (!hasSource) {
+          setStatus("Ожидаю исходник");
+          showMessage();
+        } else if (currentParse.error) {
+          setStatus("Нужно поправить исходник", "error");
+          showMessage(currentParse.error);
+        } else if (!shownTitle) {
+          setStatus("Не найдено название", "error");
+          showMessage("Добавьте \\worksheet{Название} или укажите название в настройках.");
+        } else {
+          setStatus("Готово · " + currentParse.tasks.length + " " + pluralizeTasks(currentParse.tasks.length), "success");
+          showMessage();
+        }
+
+        elements.download.disabled = !hasSource || Boolean(currentParse.error) || !shownTitle;
+      }
+
+      function pluralizeTasks(count) {
+        const mod100 = count % 100;
+        const mod10 = count % 10;
+        if (mod100 >= 11 && mod100 <= 14) return "задач";
+        if (mod10 === 1) return "задача";
+        if (mod10 >= 2 && mod10 <= 4) return "задачи";
+        return "задач";
+      }
+
+      function positiveInteger(input, label) {
+        const value = Number(input.value);
+        if (!Number.isSafeInteger(value) || value < 1) throw new Error(label + ": укажите целое положительное число.");
+        return value;
+      }
+
+      function buildInfo(parsed, settings) {
+        const addElement = [];
+        const setScorer = [];
+        const setTimeout = [];
+        const setIsAdvanced = [];
+        const setMaxTries = [];
+        const setHintsPenalty = [];
+        const task = [];
+
+        parsed.tasks.forEach((description, index) => {
+          const id = settings.firstTaskId + index;
+          const versionId = settings.firstVersionId + index;
+          addElement.push({
+            elements: [{ type: "task", id: versionId }],
+            icon: ICON_HASH,
+            section: "ordinary",
+            block: String(settings.blockId)
+          });
+          setScorer.push({
+            elementVersionId: versionId,
+            elementScorerParams: {
+              alg: { exactMatchParams: { score: 1 } },
+              scorers: [{ exactMatchParams: { score: 1 } }]
+            }
+          });
+          setTimeout.push({ versionId });
+          setIsAdvanced.push({ versionId, isAdvanced: false });
+          setMaxTries.push({ versionId });
+          setHintsPenalty.push({ versionId });
+          task.push({
+            usualTask: [{
+              id,
+              versionId,
+              description,
+              type: ["detailed"],
+              answersData: [{ comment: "", areFilesAllowed: true }],
+              solution: [{ ordering: false, text: [["."]] }],
+              solutionToShow: [0],
+              explanations: [],
+              hints: [],
+              videos: [],
+              section: "ordinary"
+            }, []]
+          });
+        });
+
+        return {
+          moduleInfo: {
+            name: settings.name,
+            groups: [],
+            addElement,
+            lecturers: [],
+            items: [],
+            setScorer,
+            setTimeout,
+            setIsAdvanced,
+            setMaxTries,
+            setHintsPenalty,
+            block: [[{ id: String(settings.blockId), level: 0, position: 1 }]]
+          },
+          task,
+          video: [],
+          text: [],
+          infoTaskItems: [],
+          infoVideoItems: [],
+          infoTextItems: [],
+          infoModuleItems: [],
+          lecturersInfo: [],
+          imageHashNameMap: { [ICON_HASH]: "task.svg" },
+          id: settings.moduleId,
+          trainings: []
+        };
+      }
+
+      const crcTable = (() => {
+        const table = new Uint32Array(256);
+        for (let n = 0; n < 256; n += 1) {
+          let value = n;
+          for (let k = 0; k < 8; k += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+          table[n] = value >>> 0;
+        }
+        return table;
+      })();
+
+      function crc32(bytes) {
+        let crc = 0xffffffff;
+        for (const byte of bytes) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+        return (crc ^ 0xffffffff) >>> 0;
+      }
+
+      function dosDateTime(date) {
+        const year = Math.max(1980, date.getFullYear());
+        return {
+          time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+          date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()
+        };
+      }
+
+      function concatenate(parts) {
+        const total = parts.reduce((sum, part) => sum + part.length, 0);
+        const result = new Uint8Array(total);
+        let offset = 0;
+        for (const part of parts) {
+          result.set(part, offset);
+          offset += part.length;
+        }
+        return result;
+      }
+
+      function zipStore(files) {
+        const encoder = new TextEncoder();
+        const localParts = [];
+        const centralParts = [];
+        const stamp = dosDateTime(new Date());
+        let offset = 0;
+
+        files.forEach((file) => {
+          const name = encoder.encode(file.name);
+          const data = typeof file.data === "string" ? encoder.encode(file.data) : file.data;
+          const crc = crc32(data);
+          const local = new Uint8Array(30);
+          const localView = new DataView(local.buffer);
+          localView.setUint32(0, 0x04034b50, true);
+          localView.setUint16(4, 20, true);
+          localView.setUint16(6, 0x0800, true);
+          localView.setUint16(8, 0, true);
+          localView.setUint16(10, stamp.time, true);
+          localView.setUint16(12, stamp.date, true);
+          localView.setUint32(14, crc, true);
+          localView.setUint32(18, data.length, true);
+          localView.setUint32(22, data.length, true);
+          localView.setUint16(26, name.length, true);
+          localView.setUint16(28, 0, true);
+          localParts.push(local, name, data);
+
+          const central = new Uint8Array(46);
+          const centralView = new DataView(central.buffer);
+          centralView.setUint32(0, 0x02014b50, true);
+          centralView.setUint16(4, 0x0314, true);
+          centralView.setUint16(6, 20, true);
+          centralView.setUint16(8, 0x0800, true);
+          centralView.setUint16(10, 0, true);
+          centralView.setUint16(12, stamp.time, true);
+          centralView.setUint16(14, stamp.date, true);
+          centralView.setUint32(16, crc, true);
+          centralView.setUint32(20, data.length, true);
+          centralView.setUint32(24, data.length, true);
+          centralView.setUint16(28, name.length, true);
+          centralView.setUint16(30, 0, true);
+          centralView.setUint16(32, 0, true);
+          centralView.setUint16(34, 0, true);
+          centralView.setUint16(36, 0, true);
+          centralView.setUint32(38, 0x81a40000, true);
+          centralView.setUint32(42, offset, true);
+          centralParts.push(central, name);
+          offset += local.length + name.length + data.length;
+        });
+
+        const centralDirectory = concatenate(centralParts);
+        const end = new Uint8Array(22);
+        const endView = new DataView(end.buffer);
+        endView.setUint32(0, 0x06054b50, true);
+        endView.setUint16(4, 0, true);
+        endView.setUint16(6, 0, true);
+        endView.setUint16(8, files.length, true);
+        endView.setUint16(10, files.length, true);
+        endView.setUint32(12, centralDirectory.length, true);
+        endView.setUint32(16, offset, true);
+        endView.setUint16(20, 0, true);
+        return concatenate([...localParts, centralDirectory, end]);
+      }
+
+      function downloadArchive() {
+        try {
+          const parsed = parseTex(elements.tex.value);
+          const settings = {
+            name: elements.moduleName.value.trim() || parsed.title,
+            moduleId: positiveInteger(elements.moduleId, "ID модуля"),
+            blockId: positiveInteger(elements.blockId, "ID блока"),
+            firstTaskId: positiveInteger(elements.taskId, "Первый ID задачи"),
+            firstVersionId: positiveInteger(elements.versionId, "Первый ID версии")
+          };
+          if (parsed.error) throw new Error(parsed.error);
+          if (!settings.name) throw new Error("Укажите название модуля.");
+          if (settings.firstTaskId + parsed.tasks.length - 1 > Number.MAX_SAFE_INTEGER) throw new Error("Диапазон ID задач слишком велик.");
+          if (settings.firstVersionId + parsed.tasks.length - 1 > Number.MAX_SAFE_INTEGER) throw new Error("Диапазон ID версий слишком велик.");
+
+          const folder = "ModuleVersionId " + settings.moduleId + "/";
+          const info = JSON.stringify(buildInfo(parsed, settings));
+          const archive = zipStore([
+            { name: folder + "img/" + ICON_HASH + ".svg", data: ICON_SVG },
+            { name: folder + "info.json", data: info }
+          ]);
+          const blob = new Blob([archive], { type: "application/zip" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "modules_" + settings.moduleId + ".zip";
+          document.body.append(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          showMessage("Архив собран: " + parsed.tasks.length + " " + pluralizeTasks(parsed.tasks.length) + ".", "success");
+        } catch (error) {
+          showMessage(error instanceof Error ? error.message : "Не удалось собрать архив.");
+        }
+      }
+
+      async function loadFile(file) {
+        if (!file) return;
+        if (!file.name.toLowerCase().endsWith(".tex")) {
+          showMessage("Выберите файл с расширением .tex.");
+          return;
+        }
+        try {
+          elements.tex.value = await file.text();
+          elements.fileName.textContent = file.name;
+          titleWasEdited = false;
+          render();
+        } catch {
+          showMessage("Не удалось прочитать файл.");
+        }
+      }
+
+      elements.tex.addEventListener("input", () => {
+        window.clearTimeout(parseTimer);
+        parseTimer = window.setTimeout(render, 120);
+      });
+      elements.moduleName.addEventListener("input", () => {
+        titleWasEdited = true;
+        render();
+      });
+      elements.open.addEventListener("click", () => elements.fileInput.click());
+      elements.fileInput.addEventListener("change", () => loadFile(elements.fileInput.files[0]));
+      elements.clear.addEventListener("click", () => {
+        elements.tex.value = "";
+        elements.fileInput.value = "";
+        elements.fileName.textContent = "Файл не выбран";
+        elements.moduleName.value = "";
+        titleWasEdited = false;
+        render();
+        elements.tex.focus();
+      });
+      elements.download.addEventListener("click", downloadArchive);
+
+      let dragDepth = 0;
+      window.addEventListener("dragenter", (event) => {
+        event.preventDefault();
+        dragDepth += 1;
+        document.body.classList.add("dragging");
+      });
+      window.addEventListener("dragover", (event) => event.preventDefault());
+      window.addEventListener("dragleave", (event) => {
+        event.preventDefault();
+        dragDepth -= 1;
+        if (dragDepth <= 0) {
+          dragDepth = 0;
+          document.body.classList.remove("dragging");
+        }
+      });
+      window.addEventListener("drop", (event) => {
+        event.preventDefault();
+        dragDepth = 0;
+        document.body.classList.remove("dragging");
+        loadFile(event.dataTransfer.files[0]);
+      });
+
+      render();
+    })();
+  </script>
+  <script src="./tex-to-module.js"></script>
+</body>
+</html>
